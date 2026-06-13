@@ -36,29 +36,31 @@ function DeviceSelect({ devices, value, onChange, kind }) {
 }
 
 async function speakText(text, onEnd) {
-  const ttsKey = localStorage.getItem("edith_elevenlabs_key") || ELEVENLABS_KEY;
+  const ttsKey = ELEVENLABS_KEY || localStorage.getItem("edith_elevenlabs_key") || "";
 
-  try {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 10000);
-    const voiceId = localStorage.getItem("edith_elevenlabs_voice") || "JBFqnCBsd6RMkjVDRZzb";
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-      method: "POST", signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", "xi-api-key": ttsKey.trim() },
-      body: JSON.stringify({ text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
-    });
-    if (r.ok) {
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.volume = 1.0;
-      if (onEnd) audio.onended = onEnd;
-      await audio.play();
-      return;
-    }
-  } catch {}
+  if (ttsKey) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 10000);
+      const voiceId = localStorage.getItem("edith_elevenlabs_voice") || "EXAVITQu4vr4xnSDxMaL";
+      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", "xi-api-key": ttsKey.trim() },
+        body: JSON.stringify({ text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+      });
+      if (r.ok) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        let el = document.getElementById("tts-audio");
+        if (!el) { el = document.createElement("audio"); el.id = "tts-audio"; el.style.display = "none"; document.body.appendChild(el); }
+        el.src = url;
+        if (onEnd) el.onended = onEnd;
+        try { await el.play(); } catch {}
+        return;
+      }
+    } catch {}
+  }
 
-  // Fallback to browser speech
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.0; u.pitch = 1.05;
@@ -229,6 +231,7 @@ async function fetchAI(text, key, img, faceData) {
 
 export default function Dashboard() {
   const [listening, setListening] = useState(false);
+  const [wakeHeard, setWakeHeard] = useState(false);
   const [watching, setWatching] = useState(() => localStorage.getItem("edith_cam_on") === "true");
   const [camReady, setCamReady] = useState(false);
   const [micDevices, setMicDevices] = useState([]);
@@ -257,6 +260,7 @@ export default function Dashboard() {
   const messagesEndRef = useRef(null);
   const restartAbortRef = useRef(false);
   const listeningRef = useRef(false);
+  const wakeActiveRef = useRef(false);
 
   const apikey = (localStorage.getItem("edith_openrouter_key") || "").trim() || FALLBACK_KEY;
   listeningRef.current = listening;
@@ -339,19 +343,37 @@ export default function Dashboard() {
 
   const doReply = useCallback(async (text) => {
     const t = text.toLowerCase();
-    // Wake word: matches "edith", "eat it", "e.d.i.t.h", "edit", etc.
     const hasWake = /\b(?:e[\s.]*d[\s.]*i[\s.]*t[\s.]*(?:h|f|s)?)\b/i.test(t)
       || /\b(?:eat\s*it|each\s*it|e\s*dith)\b/i.test(t)
       || /\b(?:he\s*did|he\s*dish)\b/i.test(t)
       || /e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?/i.test(t);
-    if (!hasWake) return;
     const cleaned = text
       .replace(/.*?\b(?:e[\s.]*d[\s.]*i[\s.]*t[\s.]*(?:h|f|s)?)\b\s*/i, "")
       .replace(/.*?\b(?:eat\s*it|each\s*it|e\s*dith)\b\s*/i, "")
       .replace(/.*?\b(?:he\s*did|he\s*dish)\b\s*/i, "")
       .replace(/.*?e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?\s*/i, "")
       .trim();
-    if (!cleaned) return;
+
+    // Wake word state machine
+    if (hasWake && cleaned) {
+      // "EDITH what time is it" → process now
+      wakeActiveRef.current = false;
+      setWakeHeard(false);
+    } else if (hasWake && !cleaned) {
+      // "EDITH" alone → activate listening, wait for command
+      wakeActiveRef.current = true;
+      setWakeHeard(true);
+      return;
+    } else if (wakeActiveRef.current && cleaned) {
+      // Follow-up command after wake word
+      wakeActiveRef.current = false;
+      setWakeHeard(false);
+    } else {
+      return; // No wake word, not in listening mode
+    }
+
+    const cmd = cleaned;
+    if (!cmd) return;
 
     const nameMatch = t.match(/(?:save|remember|call|name)\s+(?:his|her|their|this|that|the)\s+(?:face|person|guy|man|woman|lady|dude)?\s*(?:as\s+)?([a-z]+(?:\s+[a-z]+)?)/i) || t.match(/(?:this|that)\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i) || t.match(/(?:his|her|their)\s+name\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i);
     if (nameMatch && nameMatch[1] && nameMatch[1].length > 1 && camReady) {
