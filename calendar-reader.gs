@@ -45,7 +45,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    var raw = e.postData ? e.postData.contents : (e.parameter && e.parameter.data ? e.parameter.data : "{}");
+    var raw = (e.parameter && e.parameter.data) ? e.parameter.data : (e.postData ? e.postData.contents : "{}");
     var data = JSON.parse(raw);
     
     if (!data.title) {
@@ -98,8 +98,8 @@ function parseTimeString(str) {
   var now = new Date();
   str = str.toLowerCase().trim();
   
-  // "3pm tomorrow"
-  var m = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*tomorrow/i);
+  // "tomorrow at 3pm" or "tomorrow 3pm"
+  var m = str.match(/tomorrow\s*(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
   if (m) {
     var h = parseInt(m[1]);
     var mins = m[2] ? parseInt(m[2]) : 0;
@@ -111,9 +111,9 @@ function parseTimeString(str) {
     d.setHours(h, mins, 0, 0);
     return d;
   }
-  
-  // "3pm" or "3:30pm"
-  m = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+
+  // "3pm tomorrow"
+  m = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*tomorrow/i);
   if (m) {
     var h2 = parseInt(m[1]);
     var mins2 = m[2] ? parseInt(m[2]) : 0;
@@ -121,26 +121,41 @@ function parseTimeString(str) {
     if (period2 === "pm" && h2 < 12) h2 += 12;
     if (period2 === "am" && h2 === 12) h2 = 0;
     var d2 = new Date();
+    d2.setDate(d2.getDate() + 1);
     d2.setHours(h2, mins2, 0, 0);
-    if (d2.getTime() <= now.getTime()) d2.setDate(d2.getDate() + 1);
     return d2;
   }
-  
-  // "next monday at 3pm"
-  m = str.match(/next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+
+  // "3pm" or "3:30pm" or "3 pm"
+  m = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
   if (m) {
-    var days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
-    var targetDay = days.indexOf(m[1].toLowerCase());
-    var h3 = parseInt(m[2]);
-    var mins3 = m[3] ? parseInt(m[3]) : 0;
-    var period3 = m[4];
+    var h3 = parseInt(m[1]);
+    var mins3 = m[2] ? parseInt(m[2]) : 0;
+    var period3 = m[3];
     if (period3 === "pm" && h3 < 12) h3 += 12;
     if (period3 === "am" && h3 === 12) h3 = 0;
     var d3 = new Date();
-    d3.setDate(d3.getDate() + ((targetDay + 7 - d3.getDay()) % 7 || 7));
     d3.setHours(h3, mins3, 0, 0);
+    if (d3.getTime() <= now.getTime()) d3.setDate(d3.getDate() + 1);
     return d3;
   }
-  
-  return now;
+
+  // "next monday at 3pm"
+  m = str.match(/next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (m) {
+    var days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+    var targetDay = days.indexOf(m[1].toLowerCase());
+    var h4 = parseInt(m[2]);
+    var mins4 = m[3] ? parseInt(m[3]) : 0;
+    var period4 = m[4];
+    if (period4 === "pm" && h4 < 12) h4 += 12;
+    if (period4 === "am" && h4 === 12) h4 = 0;
+    var d4 = new Date();
+    d4.setDate(d4.getDate() + ((targetDay + 7 - d4.getDay()) % 7 || 7));
+    d4.setHours(h4, mins4, 0, 0);
+    return d4;
+  }
+
+  // No time found, default to 1 hour from now
+  return new Date(now.getTime() + 3600000);
 }

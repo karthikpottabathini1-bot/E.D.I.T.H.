@@ -10,7 +10,7 @@
 
 function doPost(e) {
   try {
-    var raw = e.postData ? e.postData.contents : (e.parameter && e.parameter.data ? e.parameter.data : "{}");
+    var raw = (e.parameter && e.parameter.data) ? e.parameter.data : (e.postData ? e.postData.contents : "{}");
     var data = JSON.parse(raw);
     
     if (!data.to || !data.subject || !data.body) {

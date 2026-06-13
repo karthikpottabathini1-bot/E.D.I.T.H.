@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { HardDrive, Shield, Trash2, Check, Send } from "lucide-react";
 import GlassCard from "../components/GlassCard";
 import { generateSummary } from "../utils/memoryStore";
@@ -14,6 +14,12 @@ export default function Settings() {
   const [sendResult, setSendResult] = useState("");
   const [calendarUrl, setCalendarUrl] = useState(() => localStorage.getItem("edith_calendar_url") || CAL_URL);
   const [calConnected, setCalConnected] = useState(false);
+
+  useEffect(() => {
+    fetch(calendarUrl + "?period=today").then(r => r.json()).then(d => {
+      setCalConnected(!!d.events);
+    }).catch(() => {});
+  }, []);
 
   const handleSave = () => {
     localStorage.setItem("edith_openrouter_key", apiKey);

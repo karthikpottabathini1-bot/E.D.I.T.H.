@@ -327,9 +327,13 @@ export default function Dashboard() {
       try {
         const r = await fetch(calUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(JSON.stringify({ title, startStr, location: "", description: "" })) });
         const d = await r.json();
-        setMessages(p => [...p, { role: "edith", text: d.success ? `Added to calendar: ${title}.` : "Could not create event." }]);
-        if (d.success) speakText(`Added ${title} to your calendar.`);
-      } catch { setMessages(p => [...p, { role: "edith", text: "Calendar service unavailable." }]); }
+        if (d.success) {
+          setMessages(p => [...p, { role: "edith", text: `Added to calendar: ${title}.` }]);
+          speakText(`Added ${title} to your calendar.`);
+        } else {
+          setMessages(p => [...p, { role: "edith", text: `Could not create: ${d.error || "check script deployment"}.` }]);
+        }
+      } catch (e) { setMessages(p => [...p, { role: "edith", text: `Calendar error: ${e.message || "check URL"}` }]); }
       return;
     }
 
@@ -377,6 +381,29 @@ export default function Dashboard() {
       mediaRecorderRef.current = null; setRecording(false);
       if (url) addMedia({ type: "video", dataUrl: url, fileName: "video-" + Date.now() + ".webm", tags: ["video"] });
       setMessages(p => [...p, { role: "edith", text: url ? "Video saved." : "Failed." }]);
+      return;
+    }
+
+    // Screen capture
+    if (/(what'?s\s+on\s+)?(my\s+)?screen|share\s+(your\s+)?screen|look\s+at\s+(my\s+)?screen|capture\s+screen/i.test(t)) {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const v = document.createElement("video");
+        v.srcObject = stream;
+        await v.play();
+        await new Promise(r => setTimeout(r, 500));
+        const c = document.createElement("canvas");
+        c.width = v.videoWidth; c.height = v.videoHeight;
+        c.getContext("2d").drawImage(v, 0, 0);
+        const dataUrl = c.toDataURL("image/jpeg", 0.8);
+        stream.getTracks().forEach(t => t.stop());
+        setThinking(true);
+        const reply = await fetchAI("What do you see on my screen? Describe what I'm looking at and help me with it.", apikey, dataUrl, facesRef.current);
+        setMessages(p => [...p, { role: "edith", text: reply }]);
+        setThinking(false);
+        speakText(reply);
+        addMemory({ type: "observation", text: "Screen captured", aiResponse: reply.slice(0, 80), tags: ["screen"] });
+      } catch { setMessages(p => [...p, { role: "edith", text: "Screen capture cancelled." }]); }
       return;
     }
 
@@ -490,7 +517,12 @@ export default function Dashboard() {
         <GlassCard className="!p-0 overflow-hidden flex flex-col min-h-[300px]">
           <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${listening ? "bg-green-400 animate-pulse" : "bg-gray-600"}`} /><h2 className="font-display text-sm font-semibold">{listening ? "Listening" : "Mic off"}</h2>{thinking && <span className="flex items-center gap-1.5 text-xs text-blue-300 font-mono"><Volume2 size={12} className="animate-pulse" /> Speaking</span>}</div>
-            <a href="/memory" className="flex items-center gap-1 text-xs font-mono tracking-[0.2em] text-gray-500 hover:text-white transition-colors">MEMORY <ArrowRight size={12} /></a>
+            <div className="flex items-center gap-3">
+              {messages.length > 0 && (
+                <button onClick={() => setMessages([])} className="text-[10px] font-mono tracking-[0.2em] text-gray-500 hover:text-red-400 transition-colors">CLEAR</button>
+              )}
+              <a href="/memory" className="flex items-center gap-1 text-xs font-mono tracking-[0.2em] text-gray-500 hover:text-white transition-colors">MEMORY <ArrowRight size={12} /></a>
+            </div>
           </div>
           <div className="flex-1 p-6 overflow-y-auto space-y-4">
             {messages.length === 0 && !partial && !thinking && (<div className="text-center py-12"><Sparkles size={32} className="text-gray-600 mx-auto mb-4" /><p className="text-gray-500 text-sm mb-1">Turn on the mic and start talking</p><p className="text-gray-600 text-xs">Or type below</p></div>)}
