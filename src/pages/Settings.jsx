@@ -187,6 +187,12 @@ export default function Settings() {
           </div>
         </GlassCard>
 
+        <div className="pt-4">
+          <p className="text-[10px] font-mono tracking-[0.2em] text-gray-600 text-center">
+            Powered by Vercel, Backboard.io, Omi, ElevenLabs, LangSearch, OpenRouter, Google Apps Script
+          </p>
+        </div>
+
       </div>
     </div>
   );

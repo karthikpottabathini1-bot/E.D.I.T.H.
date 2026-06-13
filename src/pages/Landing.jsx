@@ -285,6 +285,9 @@ export default function Landing() {
             <p className="text-gray-500 text-sm">
               An AI second brain — built at Milpitas Hacks 3.
             </p>
+            <p className="text-gray-600 text-[10px] font-mono tracking-[0.2em] mt-3">
+              Powered by Vercel · Backboard.io · Omi · ElevenLabs · OpenRouter · Google
+            </p>
           </div>
           <nav className="flex gap-6 font-mono text-xs edith-tag text-gray-400">
             <a href="#vision" className="hover:text-white transition-colors">

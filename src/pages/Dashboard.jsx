@@ -117,9 +117,29 @@ function stopRecording(recorder, chunksRef) {
 }
 
 async function searchWeb(query) {
+  // Skip web search for casual conversation
+  if (/^(hi|hey|hello|how are you|what'?s up|yo|thanks|thank you|ok|okay|bye|goodbye|good morning|good night)$/i.test(query.trim())) return "";
+
+  // Try DuckDuckGo Instant Answers (free, no key needed)
   try {
     const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 4000);
+    setTimeout(() => ctrl.abort(), 2000);
+    const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { signal: ctrl.signal });
+    const d = await r.json();
+    const parts = [];
+    if (d.AbstractText) parts.push("DDG: " + d.AbstractText);
+    if (d.RelatedTopics && d.RelatedTopics.length) {
+      d.RelatedTopics.slice(0, 3).forEach(t => {
+        if (t.Text) parts.push("- " + t.Text);
+      });
+    }
+    if (parts.length) return parts.join("\n");
+  } catch {}
+
+  // Try LangSearch as backup
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 1500);
     const r = await fetch("https://api.langsearch.com/v1/search", {
       method: "POST", signal: ctrl.signal,
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + (import.meta.env.VITE_LANGSEARCH_KEY || "sk-8fa9940842a54134a5b95332184b4548") },
@@ -127,9 +147,9 @@ async function searchWeb(query) {
     });
     const d = await r.json();
     const pages = d?.data?.webPages?.value;
-    if (!pages || !pages.length) return "";
-    return pages.slice(0, 3).map((p, i) => `[${i + 1}] ${p.name || p.title || ""}: ${p.snippet || p.description || ""}`).join("\n");
-  } catch { return ""; }
+    if (pages && pages.length) return pages.slice(0, 3).map((p, i) => `[${i + 1}] ${p.name || p.title || ""}: ${p.snippet || p.description || ""}`).join("\n");
+  } catch {}
+  return "";
 }
 
 async function fetchAI(text, key, img, faceData) {
