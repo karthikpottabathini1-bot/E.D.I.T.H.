@@ -3,8 +3,8 @@ import { HardDrive, Shield, Trash2, Check, Send } from "lucide-react";
 import GlassCard from "../components/GlassCard";
 import { generateSummary } from "../utils/memoryStore";
 
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwd7Vdgyo7Ij01MNIr7qq2jHG0jdljrK-bazktTf6-y6E0RJ8LhVT7z9NNTHFmWnSPk_Q/exec";
-const CAL_URL = "https://script.google.com/macros/s/AKfycbxN-PfSdqU8g3dG8bDtbKvHqGRXAN1WW8MyMVaQ6OWi4EIMEnlwE-446OQeinneih4/exec";
+const SCRIPT_URL = import.meta.env.VITE_EMAIL_SCRIPT_URL || "";
+const CAL_URL = import.meta.env.VITE_CALENDAR_SCRIPT_URL || "";
 
 export default function Settings() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("edith_openrouter_key") || "");
@@ -14,6 +14,8 @@ export default function Settings() {
   const [sendResult, setSendResult] = useState("");
   const [calendarUrl, setCalendarUrl] = useState(() => localStorage.getItem("edith_calendar_url") || CAL_URL);
   const [calConnected, setCalConnected] = useState(false);
+  const [elevenKey, setElevenKey] = useState(() => localStorage.getItem("edith_elevenlabs_key") || "");
+  const [backboardKey, setBackboardKey] = useState(() => localStorage.getItem("edith_backboard_key") || "");
 
   useEffect(() => {
     fetch(calendarUrl + "?period=today").then(r => r.json()).then(d => {
@@ -132,6 +134,20 @@ export default function Settings() {
             </button>
           </div>
           <p className="text-xs text-gray-600 mt-3 leading-relaxed">Uses Gemini 2.5 Flash via OpenRouter. Key stored in your browser only.</p>
+        </GlassCard>
+
+        <GlassCard className="!p-6">
+          <h2 className="font-mono text-xs tracking-[0.2em] text-gray-500 mb-4">BACKBOARD.IO API KEY</h2>
+          <div className="flex gap-3">
+            <input type="password" placeholder="bb-..." value={backboardKey}
+              onChange={(e) => { setBackboardKey(e.target.value); setSaved(false); }}
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-white/20 transition-colors" />
+            <button onClick={() => { localStorage.setItem("edith_backboard_key", backboardKey); setSaved(true); setTimeout(() => setSaved(false), 2000); }}
+              className={`font-mono text-xs tracking-[0.2em] rounded-xl px-5 py-3 transition-all ${saved ? "bg-green-500 text-white scale-95" : "bg-white text-black hover:bg-gray-200"}`}>
+              {saved ? <span className="flex items-center gap-1.5"><Check size={14} className="animate-bounce" /> SAVED</span> : "SAVE"}
+            </button>
+          </div>
+          <p className="text-xs text-gray-600 mt-3 leading-relaxed">AI via Backboard.io — wraps OpenRouter with threading, memory, and tool calling. If set, used as primary AI provider.</p>
         </GlassCard>
 
         <GlassCard className="!p-6">

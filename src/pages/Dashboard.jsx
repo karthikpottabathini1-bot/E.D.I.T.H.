@@ -10,13 +10,13 @@ import { addMemory, searchMemories, formatMemoriesForAI, generateSummary, getSug
 import { addMedia } from "../utils/mediaStore";
 import { addReminder, parseReminder, requestNotificationPermission } from "../utils/reminders";
 import { startLocationTracking, formatLocationsForAI } from "../utils/locationTracker";
-import { loadObjectModel, detectObjects, formatObjectsForAI } from "../utils/objectDetection";
 import { observeFace, getWorkplaceObservation, getWorkContext } from "../utils/workplaceAssistant";
 
 const SR_W = window.SpeechRecognition || window.webkitSpeechRecognition;
-const FALLBACK_KEY = "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";
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwd7Vdgyo7Ij01MNIr7qq2jHG0jdljrK-bazktTf6-y6E0RJ8LhVT7z9NNTHFmWnSPk_Q/exec";
-const CALENDAR_URL = "https://script.google.com/macros/s/AKfycbxN-PfSdqU8g3dG8bDtbKvHqGRXAN1WW8MyMVaQ6OWi4EIMEnlwE-446OQeinneih4/exec";
+const FALLBACK_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
+const SCRIPT_URL = import.meta.env.VITE_EMAIL_SCRIPT_URL || "";
+const CALENDAR_URL = import.meta.env.VITE_CALENDAR_SCRIPT_URL || "";
+const ELEVENLABS_KEY = import.meta.env.VITE_ELEVENLABS_KEY || "";
 
 function DeviceSelect({ devices, value, onChange, kind }) {
   return (
@@ -36,23 +36,29 @@ function DeviceSelect({ devices, value, onChange, kind }) {
 }
 
 async function speakText(text, onEnd) {
-  const key = localStorage.getItem("edith_openrouter_key") || FALLBACK_KEY;
+  const ttsKey = localStorage.getItem("edith_elevenlabs_key") || ELEVENLABS_KEY;
+
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 10000);
-    const r = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+    const voiceId = localStorage.getItem("edith_elevenlabs_voice") || "JBFqnCBsd6RMkjVDRZzb";
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: "POST", signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key.trim(), "HTTP-Referer": window.location.origin },
-      body: JSON.stringify({ model: "openai/tts-1", input: text, voice: "fable", speed: 1.0 }),
+      headers: { "Content-Type": "application/json", "xi-api-key": ttsKey.trim() },
+      body: JSON.stringify({ text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
     });
     if (r.ok) {
       const blob = await r.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.volume = 1.0;
       if (onEnd) audio.onended = onEnd;
-      audio.play();
+      await audio.play();
       return;
     }
   } catch {}
+
+  // Fallback to browser speech
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.0; u.pitch = 1.05;
@@ -116,7 +122,7 @@ async function searchWeb(query) {
     setTimeout(() => ctrl.abort(), 4000);
     const r = await fetch("https://api.langsearch.com/v1/search", {
       method: "POST", signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", Authorization: "Bearer sk-8fa9940842a54134a5b95332184b4548" },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (import.meta.env.VITE_LANGSEARCH_KEY || "sk-8fa9940842a54134a5b95332184b4548") },
       body: JSON.stringify({ query }),
     });
     const d = await r.json();
@@ -144,8 +150,6 @@ async function fetchAI(text, key, img, faceData) {
     }).join("\n");
     sysMsg += "\n\nPEOPLE IN VIEW:\n" + faceLines;
   }
-  const objCtx = formatObjectsForAI();
-  if (objCtx) sysMsg += "\n\n" + objCtx;
   if (faceData && faceData.length > 0 && faceData.some(f => f.expression)) {
     sysMsg += "\n\nMoods: " + faceData.map(f => `${f.name}: ${f.expression}`).join(", ") + ".";
   }
@@ -161,10 +165,34 @@ async function fetchAI(text, key, img, faceData) {
     } catch {}
   }
   sysMsg += "\n\nNever use emojis. Plain text only.";
+
+  const fullMsg = `${sysMsg}\n\nUser: ${text}`;
+
+  // Try Backboard.io first
+  const backboardKey = localStorage.getItem("edith_backboard_key");
+  if (backboardKey) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 10000);
+      const threadId = localStorage.getItem("edith_backboard_thread") || "";
+      const r = await fetch("https://app.backboard.io/api/threads/messages", {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", "X-API-Key": backboardKey.trim() },
+        body: JSON.stringify({ content: fullMsg, llm_provider: "openrouter", model_name: "google/gemini-2.5-flash", stream: false, ...(threadId ? { thread_id: threadId } : {}) }),
+      });
+      const d = await r.json();
+      if (d.content) {
+        if (d.thread_id) localStorage.setItem("edith_backboard_thread", d.thread_id);
+        return d.content;
+      }
+    } catch {}
+  }
+
+  // Fallback to OpenRouter
   const userContent = img ? [{ type: "image_url", image_url: { url: img } }, { type: "text", text }] : text;
   try {
     const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 15000);
+    setTimeout(() => ctrl.abort(), 10000);
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST", signal: ctrl.signal,
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + key.trim(), "HTTP-Referer": window.location.origin, "X-Title": "E.D.I.T.H." },
@@ -196,7 +224,6 @@ export default function Dashboard() {
   const [faceCount, setFaceCount] = useState(0);
   const [detectedFaces, setDetectedFaces] = useState([]);
   const [modelsReady, setModelsReady] = useState(false);
-  const [objectsInView, setObjectsInView] = useState([]);
   const [micPref, setMicPref] = useState(() => localStorage.getItem("edith_mic_on") === "true");
   const [micInitialized, setMicInitialized] = useState(false);
 
@@ -225,7 +252,7 @@ export default function Dashboard() {
     }
   }, [micPref, micInitialized, selectedMic]);
 
-  useEffect(() => { loadModels().then(() => setModelsReady(true)).catch(() => {}); loadObjectModel().catch(() => {}); window.speechSynthesis.getVoices(); startLocationTracking(); requestNotificationPermission(); }, []);
+  useEffect(() => { loadModels().then(() => setModelsReady(true)).catch(() => {}); window.speechSynthesis.getVoices(); startLocationTracking(); requestNotificationPermission(); }, []);
 
   useEffect(() => {
     (async () => {
@@ -285,7 +312,6 @@ export default function Dashboard() {
           observeFace(true, detections.length > 0 ? detections[0].expressions : null, null);
         } else { facesRef.current = []; setDetectedFaces([]); observeFace(false, null, null); }
       } catch {}
-      try { const objs = await detectObjects(videoRef.current); setObjectsInView(objs.map(o => o.class).filter((v, i, a) => a.indexOf(v) === i)); observeFace(facesRef.current.length > 0, null, objs.map(o => o.class)); } catch {}
     };
     faceIntervalRef.current = setInterval(run, 3000); run();
     return () => { if (faceIntervalRef.current) { clearInterval(faceIntervalRef.current); faceIntervalRef.current = null; } };
@@ -293,9 +319,18 @@ export default function Dashboard() {
 
   const doReply = useCallback(async (text) => {
     const t = text.toLowerCase();
-    const hasWake = /e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?/i.test(t);
+    // Wake word: matches "edith", "eat it", "e.d.i.t.h", "edit", etc.
+    const hasWake = /\b(?:e[\s.]*d[\s.]*i[\s.]*t[\s.]*(?:h|f|s)?)\b/i.test(t)
+      || /\b(?:eat\s*it|each\s*it|e\s*dith)\b/i.test(t)
+      || /\b(?:he\s*did|he\s*dish)\b/i.test(t)
+      || /e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?/i.test(t);
     if (!hasWake) return;
-    const cleaned = text.replace(/.*?e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?\s*/i, "").trim();
+    const cleaned = text
+      .replace(/.*?\b(?:e[\s.]*d[\s.]*i[\s.]*t[\s.]*(?:h|f|s)?)\b\s*/i, "")
+      .replace(/.*?\b(?:eat\s*it|each\s*it|e\s*dith)\b\s*/i, "")
+      .replace(/.*?\b(?:he\s*did|he\s*dish)\b\s*/i, "")
+      .replace(/.*?e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?\s*/i, "")
+      .trim();
     if (!cleaned) return;
 
     const nameMatch = t.match(/(?:save|remember|call|name)\s+(?:his|her|their|this|that|the)\s+(?:face|person|guy|man|woman|lady|dude)?\s*(?:as\s+)?([a-z]+(?:\s+[a-z]+)?)/i) || t.match(/(?:this|that)\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i) || t.match(/(?:his|her|their)\s+name\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i);
@@ -462,9 +497,9 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const check = () => { if (messages.length === 0 || thinking) return; const nudge = getSuggestedNudge(); const workObs = getWorkplaceObservation(camReady, facesRef.current, null, objectsInView); const msg = workObs || nudge; if (msg) { setMessages(p => [...p, { role: "edith", text: msg }]); speakText(msg); } };
+    const check = () => { if (messages.length === 0 || thinking) return; const nudge = getSuggestedNudge(); const workObs = getWorkplaceObservation(camReady, facesRef.current, null, []); const msg = workObs || nudge; if (msg) { setMessages(p => [...p, { role: "edith", text: msg }]); speakText(msg); } };
     const interval = setInterval(check, 300000); return () => clearInterval(interval);
-  }, [messages.length, thinking, camReady, objectsInView.length]);
+  }, [messages.length, thinking, camReady]);
 
   const stats = [
     { label: "Faces known", value: faceCount, icon: UserCheck },
@@ -492,7 +527,6 @@ export default function Dashboard() {
                   <span className="font-mono text-[10px] tracking-[0.2em] text-red-400 bg-red-500/10 px-2 py-1 rounded-full border border-red-500/20 backdrop-blur-sm">LVE</span>
                   {recording && <span className="font-mono text-[10px] tracking-[0.2em] text-red-300 bg-red-600/20 px-2 py-1 rounded-full border border-red-600/30 backdrop-blur-sm animate-pulse">REC</span>}
                   {detectedFaces.length > 0 && <span className="font-mono text-[10px] tracking-[0.2em] text-green-400 bg-green-500/10 px-2 py-1 rounded-full border border-green-500/20 backdrop-blur-sm">{detectedFaces.length} FACE{detectedFaces.length > 1 ? "S" : ""}</span>}
-                  {objectsInView.slice(0, 3).map(obj => <span key={obj} className="font-mono text-[10px] tracking-[0.2em] text-blue-300 bg-blue-500/10 px-2 py-1 rounded-full border border-blue-500/20 backdrop-blur-sm">{obj.toUpperCase()}</span>)}
                 </div>
               </>
             )}

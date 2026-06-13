@@ -3,9 +3,10 @@
 const STORE_KEY = "edith_work_sessions";
 let sessionStart = null;
 let lastObserved = 0;
-let faceVisibleHistory = []; // true/false array for last N observations
-let expressionHistory = []; // mood over time
+let faceVisibleHistory = [];
+let expressionHistory = [];
 let distractionCount = 0;
+let _milestoneSent = {};
 
 export function startWorkSession() {
   if (sessionStart) return;
@@ -93,9 +94,10 @@ export function getWorkplaceObservation(camReady, faces, expressions, objects) {
 
   const observations = [];
 
-  // Work session milestone
-  if (hours >= 1 && mins < 5 && hours % 1 === 0) {
-    observations.push(`You've been working for ${hours} hour${hours > 1 ? "s" : ""}. How are you doing?`);
+  // Work session milestone (only fire once per hour)
+  if (hours >= 1 && !_milestoneSent[hours]) {
+    _milestoneSent[hours] = true;
+    observations.push(`You've been working for ${hours} hour${hours > 1 ? "s" : ""}. How are you feeling?`);
   }
 
   // Distraction detection: phone visible while working
