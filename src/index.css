@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* -------------------------------------------------- */
+/* E.D.I.T.H. design system overrides                        */
+/* -------------------------------------------------- */
+
+.edith-glass {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: border-color 0.3s ease, transform 0.3s ease, background 0.3s ease;
+}
+
+.edith-glass:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.edith-glass-strong {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.edith-glow-line {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(111, 183, 255, 0.5),
+    rgba(255, 157, 92, 0.5),
+    transparent
+  );
+  height: 1px;
+}
+
+.edith-tag {
+  letter-spacing: 0.2em;
+}
+
+.edith-wave {
+  animation: edith-wave-pulse 7s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes edith-wave-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.edith-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.edith-reveal-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.edith-hero-fade {
+  background: linear-gradient(
+    to top,
+    #020203 0%,
+    rgba(2, 2, 3, 0.4) 35%,
+    rgba(2, 2, 3, 0) 70%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edith-wave {
+    animation: none;
+  }
+  .edith-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* -------------------------------------------------- */
+/* Scrollbar                                            */
+/* -------------------------------------------------- */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
