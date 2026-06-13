@@ -6,11 +6,17 @@ import {
 import CornerGlow from "../components/CornerGlow";
 import GlassCard from "../components/GlassCard";
 import { loadModels, detectFaces, getKnownFaces, saveKnownFaces, matchFace, renameLastNewFace } from "../utils/faceRecognition";
-import { addMemory, searchMemories, formatMemoriesForAI } from "../utils/memoryStore";
+import { addMemory, searchMemories, formatMemoriesForAI, generateSummary, getSuggestedNudge } from "../utils/memoryStore";
 import { addMedia } from "../utils/mediaStore";
+import { addReminder, parseReminder, requestNotificationPermission } from "../utils/reminders";
+import { startLocationTracking, formatLocationsForAI } from "../utils/locationTracker";
+import { loadObjectModel, detectObjects, formatObjectsForAI } from "../utils/objectDetection";
+import { observeFace, getWorkplaceObservation, getWorkContext } from "../utils/workplaceAssistant";
 
 const SR_W = window.SpeechRecognition || window.webkitSpeechRecognition;
 const FALLBACK_KEY = "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";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwd7Vdgyo7Ij01MNIr7qq2jHG0jdljrK-bazktTf6-y6E0RJ8LhVT7z9NNTHFmWnSPk_Q/exec";
+const CALENDAR_URL = "https://script.google.com/macros/s/AKfycbxN-PfSdqU8g3dG8bDtbKvHqGRXAN1WW8MyMVaQ6OWi4EIMEnlwE-446OQeinneih4/exec";
 
 function DeviceSelect({ devices, value, onChange, kind }) {
   return (
@@ -29,12 +35,29 @@ function DeviceSelect({ devices, value, onChange, kind }) {
   );
 }
 
-function speakText(text, onEnd) {
+async function speakText(text, onEnd) {
+  const key = localStorage.getItem("edith_openrouter_key") || FALLBACK_KEY;
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key.trim(), "HTTP-Referer": window.location.origin },
+      body: JSON.stringify({ model: "openai/tts-1", input: text, voice: "fable", speed: 1.0 }),
+    });
+    if (r.ok) {
+      const blob = await r.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      if (onEnd) audio.onended = onEnd;
+      audio.play();
+      return;
+    }
+  } catch {}
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.0; u.pitch = 1.05;
   const voices = window.speechSynthesis.getVoices();
-  const pf = voices.find(v => v.name.includes("Samantha") || v.name.includes("Zira") || v.name.includes("Karen"))
+  const pf = voices.find(v => v.name.includes("Samantha") || v.name.includes("Karen"))
     || voices.find(v => v.lang.startsWith("en") && v.name.includes("Female"));
   if (pf) u.voice = pf;
   if (onEnd) u.onend = onEnd;
@@ -49,7 +72,7 @@ function captureFrame(el) {
     const ctx = c.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(el, 0, 0);
-    return { dataUrl: c.toDataURL("image/jpeg", 0.85), blob: null, canvas: c };
+    return { dataUrl: c.toDataURL("image/jpeg", 0.85), canvas: c };
   } catch { return null; }
 }
 
@@ -60,8 +83,7 @@ async function takePhoto(videoEl) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = "edith-photo-" + Date.now() + ".jpg"; a.click();
-  URL.revokeObjectURL(url);
-  return { dataUrl: frame.dataUrl, blobUrl: url };
+  return { dataUrl: frame.dataUrl };
 }
 
 function startRecording(stream, chunksRef) {
@@ -100,85 +122,66 @@ async function searchWeb(query) {
     const d = await r.json();
     const pages = d?.data?.webPages?.value;
     if (!pages || !pages.length) return "";
-    return pages.slice(0, 3).map((p, i) =>
-      `[${i + 1}] ${p.name || p.title || ""}: ${p.snippet || p.description || ""}`
-    ).join("\n");
+    return pages.slice(0, 3).map((p, i) => `[${i + 1}] ${p.name || p.title || ""}: ${p.snippet || p.description || ""}`).join("\n");
   } catch { return ""; }
 }
 
 async function fetchAI(text, key, img, faceData) {
-  if (!key || !key.startsWith("sk-")) return "Invalid API key. Add a valid OpenRouter key in Settings.";
-
-  const [webResults, memoryContext] = await Promise.all([
-    searchWeb(text),
-    Promise.resolve(formatMemoriesForAI(text)),
-  ]);
-
-  let sysMsg = "You are E.D.I.T.H., an AI second brain with persistent memory. Keep responses short (1-2 sentences), conversational, and helpful.";
-
+  if (!key || !key.startsWith("sk-")) return "Invalid API key.";
+  const [webResults, memoryContext] = await Promise.all([searchWeb(text), Promise.resolve(formatMemoriesForAI(text))]);
+  let sysMsg = "You are E.D.I.T.H., an AI second brain and workplace assistant. Keep responses short (1-2 sentences), conversational, and helpful.";
   if (memoryContext) sysMsg += "\n\n" + memoryContext;
-
+  sysMsg += "\n\n" + getWorkContext();
   if (img) sysMsg += " You can see the user through the camera.";
-
+  const locContext = formatLocationsForAI();
+  if (locContext) sysMsg += "\n\n" + locContext;
   if (faceData && faceData.length > 0) {
     const faceLines = faceData.map(f => {
       const t = new Date(f.firstSeen);
-      if (f.known) {
-        return `- ${f.name}: met ${f.encounters} times, first met ${t.toLocaleDateString()}${f.photo ? " (photo saved)" : ""}`;
-      }
-      return `- ${f.name}: new person, never seen before (unnamed — user can say "save as [name]" to remember them)`;
+      const mood = f.expression ? ` (looks ${f.expression})` : "";
+      if (f.known) return `- ${f.name}: met ${f.encounters} times, first met ${t.toLocaleDateString()}${mood}`;
+      return `- ${f.name}: new person${mood} (say "save as [name]" to remember)`;
     }).join("\n");
-    sysMsg += "\n\nPEOPLE IN FRONT OF CAMERA RIGHT NOW:\n" + faceLines + "\n\nIf asked who someone is, name them. If it's a known person, mention details. New faces can be named by the user.";
+    sysMsg += "\n\nPEOPLE IN VIEW:\n" + faceLines;
   }
-
-  if (webResults) {
-    sysMsg += "\n\nLIVE WEB SEARCH:\n" + webResults;
+  const objCtx = formatObjectsForAI();
+  if (objCtx) sysMsg += "\n\n" + objCtx;
+  if (faceData && faceData.length > 0 && faceData.some(f => f.expression)) {
+    sysMsg += "\n\nMoods: " + faceData.map(f => `${f.name}: ${f.expression}`).join(", ") + ".";
   }
-
-  sysMsg += "\n\nNever use emojis. Plain text only. Use your memory to provide context-aware responses. If the user asks about something they told you before, reference it.";
-
-  const userContent = img
-    ? [{ type: "image_url", image_url: { url: img } }, { type: "text", text }]
-    : text;
-
+  if (webResults) sysMsg += "\n\nWEB SEARCH:\n" + webResults;
+  const calUrl = localStorage.getItem("edith_calendar_url") || CALENDAR_URL;
+  if (calUrl) {
+    try {
+      const r = await fetch(calUrl + "?period=today");
+      const d = await r.json();
+      if (d.events && d.events.length) {
+        sysMsg += "\n\nCALENDAR:\n" + d.events.map(e => `- ${new Date(e.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: ${e.title}`).join("\n");
+      }
+    } catch {}
+  }
+  sysMsg += "\n\nNever use emojis. Plain text only.";
+  const userContent = img ? [{ type: "image_url", image_url: { url: img } }, { type: "text", text }] : text;
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 15000);
-
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST", signal: ctrl.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + key.trim(),
-        "HTTP-Referer": window.location.origin,
-        "X-Title": "E.D.I.T.H.",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: sysMsg },
-          { role: "user", content: userContent },
-        ],
-        max_tokens: 300, temperature: 0.7,
-      }),
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key.trim(), "HTTP-Referer": window.location.origin, "X-Title": "E.D.I.T.H." },
+      body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "system", content: sysMsg }, { role: "user", content: userContent }], max_tokens: 300, temperature: 0.7 }),
     });
-
     const d = await r.json();
-    if (d.error) return "API error: " + (d.error.message || d.error.code || JSON.stringify(d.error));
-    return d.choices?.[0]?.message?.content || "(empty response)";
+    if (d.error) return "API error: " + (d.error.message || d.error.code);
+    return d.choices?.[0]?.message?.content || "(empty)";
   } catch (e) {
-    if (e.name === "AbortError") return "Timed out waiting for AI.";
-    return "Network error: " + (e.message || "could not reach API");
+    if (e.name === "AbortError") return "Timed out.";
+    return "Network error.";
   }
 }
-
-/* ================================================================ */
 
 export default function Dashboard() {
   const [listening, setListening] = useState(false);
   const [watching, setWatching] = useState(() => localStorage.getItem("edith_cam_on") === "true");
-  const [micPref, setMicPref] = useState(() => localStorage.getItem("edith_mic_on") === "true");
-  const [micInitialized, setMicInitialized] = useState(false);
   const [camReady, setCamReady] = useState(false);
   const [micDevices, setMicDevices] = useState([]);
   const [camDevices, setCamDevices] = useState([]);
@@ -193,6 +196,9 @@ export default function Dashboard() {
   const [faceCount, setFaceCount] = useState(0);
   const [detectedFaces, setDetectedFaces] = useState([]);
   const [modelsReady, setModelsReady] = useState(false);
+  const [objectsInView, setObjectsInView] = useState([]);
+  const [micPref, setMicPref] = useState(() => localStorage.getItem("edith_mic_on") === "true");
+  const [micInitialized, setMicInitialized] = useState(false);
 
   const videoRef = useRef(null);
   const camStreamRef = useRef(null);
@@ -209,68 +215,39 @@ export default function Dashboard() {
   listeningRef.current = listening;
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, partial]);
+  useEffect(() => { localStorage.setItem("edith_cam_on", watching ? "true" : "false"); }, [watching]);
+  useEffect(() => { localStorage.setItem("edith_mic_on", listening ? "true" : "false"); }, [listening]);
 
-  useEffect(() => {
-    loadModels().then(() => setModelsReady(true)).catch(() => {});
-    window.speechSynthesis.getVoices();
-  }, []);
-
-  /* ---- persist & restore camera/mic state ---- */
-  useEffect(() => {
-    localStorage.setItem("edith_cam_on", watching ? "true" : "false");
-  }, [watching]);
-
-  useEffect(() => {
-    localStorage.setItem("edith_mic_on", listening ? "true" : "false");
-  }, [listening]);
-
-  /* ---- auto-restore mic on mount ---- */
   useEffect(() => {
     if (micPref && !micInitialized && SR_W && selectedMic) {
       setMicInitialized(true);
-      const timer = setTimeout(() => toggleMic(), 500);
-      return () => clearTimeout(timer);
+      setTimeout(() => toggleMic(), 500);
     }
   }, [micPref, micInitialized, selectedMic]);
 
-  /* ---- devices (with labels) ---- */
+  useEffect(() => { loadModels().then(() => setModelsReady(true)).catch(() => {}); loadObjectModel().catch(() => {}); window.speechSynthesis.getVoices(); startLocationTracking(); requestNotificationPermission(); }, []);
+
   useEffect(() => {
     (async () => {
       let m = [], c = [];
-      try {
-        await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(s => {
-          s.getTracks().forEach(t => t.stop());
-        });
-      } catch {}
-      try {
-        const all = await navigator.mediaDevices.enumerateDevices();
-        m = all.filter(d => d.kind === "audioinput");
-        c = all.filter(d => d.kind === "videoinput");
-      } catch {}
+      try { await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(s => { s.getTracks().forEach(t => t.stop()); }); } catch {}
+      try { const all = await navigator.mediaDevices.enumerateDevices(); m = all.filter(d => d.kind === "audioinput"); c = all.filter(d => d.kind === "videoinput"); } catch {}
       if (m.length === 0) m = [{ deviceId: "default", label: "Microphone", kind: "audioinput" }];
       if (c.length === 0) c = [{ deviceId: "default", label: "Camera", kind: "videoinput" }];
-      setMicDevices(m); setCamDevices(c);
-      setSelectedMic(m[0].deviceId); setSelectedCam(c[0].deviceId);
+      setMicDevices(m); setCamDevices(c); setSelectedMic(m[0].deviceId); setSelectedCam(c[0].deviceId);
     })();
   }, []);
 
-  /* ---- camera ---- */
   useEffect(() => {
     if (!watching || !selectedCam) {
       if (camStreamRef.current) { camStreamRef.current.getTracks().forEach(t => t.stop()); camStreamRef.current = null; }
-      setCamReady(false);
-      if (faceIntervalRef.current) { clearInterval(faceIntervalRef.current); faceIntervalRef.current = null; }
-      return;
+      setCamReady(false); if (faceIntervalRef.current) { clearInterval(faceIntervalRef.current); faceIntervalRef.current = null; } return;
     }
     let done = false;
     (async () => {
       let s = null;
-      if (selectedCam && selectedCam !== "default") {
-        try { s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: selectedCam } } }); } catch {}
-      }
-      if (!s) {
-        try { s = await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
-      }
+      if (selectedCam && selectedCam !== "default") { try { s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: selectedCam } } }); } catch {} }
+      if (!s) { try { s = await navigator.mediaDevices.getUserMedia({ video: true }); } catch {} }
       if (!s) { if (!done) setWatching(false); return; }
       if (done) { s.getTracks().forEach(t => t.stop()); return; }
       camStreamRef.current = s;
@@ -281,10 +258,9 @@ export default function Dashboard() {
     return () => { done = true; if (camStreamRef.current) { camStreamRef.current.getTracks().forEach(t => t.stop()); camStreamRef.current = null; } setCamReady(false); };
   }, [watching, selectedCam]);
 
-  /* ---- face detection (silent, tracks who is in view) ---- */
   useEffect(() => {
     if (!camReady || !modelsReady || !watching) return;
-    const runDetection = async () => {
+    const run = async () => {
       try {
         const detections = await detectFaces(videoRef.current);
         if (detections.length > 0) {
@@ -294,94 +270,113 @@ export default function Dashboard() {
           detections.forEach(d => {
             const match = matchFace(d.descriptor, knownFaces, 0.55);
             const idx = match && match.label !== "unknown" ? knownFaces.findIndex(f => f.name === match.label) : -1;
+            const expr = d.expressions ? Object.entries(d.expressions).sort((a, b) => b[1] - a[1])[0] : null;
             if (idx >= 0) {
-              knownFaces[idx].lastSeen = Date.now();
-              knownFaces[idx].encounterCount = (knownFaces[idx].encounterCount || 0) + 1;
-              updated = true;
-              inView.push({ name: knownFaces[idx].name, known: true, encounters: knownFaces[idx].encounterCount, firstSeen: knownFaces[idx].firstSeen, photo: knownFaces[idx].photo });
+              knownFaces[idx].lastSeen = Date.now(); knownFaces[idx].encounterCount = (knownFaces[idx].encounterCount || 0) + 1; updated = true;
+              inView.push({ name: knownFaces[idx].name, known: true, encounters: knownFaces[idx].encounterCount, firstSeen: knownFaces[idx].firstSeen, photo: knownFaces[idx].photo, expression: expr ? expr[0] : "neutral" });
             } else {
-              const name = "Person " + (knownFaces.length + 1);
-              knownFaces.push({ name, firstSeen: Date.now(), lastSeen: Date.now(), encounterCount: 1, photo: null, descriptor: d.descriptor });
-              updated = true;
-              inView.push({ name, known: false, encounters: 1, firstSeen: Date.now(), photo: null });
+              const n = "Person " + (knownFaces.length + 1);
+              knownFaces.push({ name: n, firstSeen: Date.now(), lastSeen: Date.now(), encounterCount: 1, photo: null, descriptor: d.descriptor }); updated = true;
+              inView.push({ name: n, known: false, encounters: 1, firstSeen: Date.now(), photo: null, expression: expr ? expr[0] : "neutral" });
             }
           });
           if (updated) saveKnownFaces(knownFaces);
-          facesRef.current = inView;
-          setFaceCount(knownFaces.length);
-          setDetectedFaces(detections);
-        } else {
-          facesRef.current = [];
-          setDetectedFaces([]);
-        }
+          facesRef.current = inView; setFaceCount(knownFaces.length); setDetectedFaces(detections);
+          observeFace(true, detections.length > 0 ? detections[0].expressions : null, null);
+        } else { facesRef.current = []; setDetectedFaces([]); observeFace(false, null, null); }
       } catch {}
+      try { const objs = await detectObjects(videoRef.current); setObjectsInView(objs.map(o => o.class).filter((v, i, a) => a.indexOf(v) === i)); observeFace(facesRef.current.length > 0, null, objs.map(o => o.class)); } catch {}
     };
-    faceIntervalRef.current = setInterval(runDetection, 3000);
-    runDetection();
+    faceIntervalRef.current = setInterval(run, 3000); run();
     return () => { if (faceIntervalRef.current) { clearInterval(faceIntervalRef.current); faceIntervalRef.current = null; } };
   }, [camReady, modelsReady, watching]);
 
-  /* ---- AI reply ---- */
   const doReply = useCallback(async (text) => {
     const t = text.toLowerCase();
     const hasWake = /e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?/i.test(t);
     if (!hasWake) return;
-
     const cleaned = text.replace(/.*?e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?\s*/i, "").trim();
     if (!cleaned) return;
 
-    // Face naming
-    const nameMatch = t.match(/(?:save|remember|call|name)\s+(?:his|her|their|this|that|the)\s+(?:face|person|guy|man|woman|lady|dude)?\s*(?:as\s+)?([a-z]+(?:\s+[a-z]+)?)/i)
-      || t.match(/(?:this|that)\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i)
-      || t.match(/(?:his|her|their)\s+name\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i);
-    if (nameMatch && nameMatch[1] && nameMatch[1].length > 1) {
+    const nameMatch = t.match(/(?:save|remember|call|name)\s+(?:his|her|their|this|that|the)\s+(?:face|person|guy|man|woman|lady|dude)?\s*(?:as\s+)?([a-z]+(?:\s+[a-z]+)?)/i) || t.match(/(?:this|that)\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i) || t.match(/(?:his|her|their)\s+name\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i);
+    if (nameMatch && nameMatch[1] && nameMatch[1].length > 1 && camReady) {
       const name = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1).toLowerCase();
-      if (!camReady) { return; }
       const frame = captureFrame(videoRef.current);
-      const photo = frame ? frame.dataUrl : null;
-      const result = renameLastNewFace(name, photo);
-      if (result) {
-        setMessages(p => [...p, { role: "edith", text: "Got it. I'll remember " + result.name + " from now on." }]);
-        addMemory({ type: "observation", text: "Named face: " + name, aiResponse: "Face saved as " + name, faces: [name], tags: ["face", "saved", name.toLowerCase()] });
-        speakText("Got it. I'll remember " + name + " from now on.");
-      }
+      const result = renameLastNewFace(name, frame ? frame.dataUrl : null);
+      if (result) { setMessages(p => [...p, { role: "edith", text: "Got it. I'll remember " + result.name + " from now on." }]); addMemory({ type: "observation", text: "Named face: " + name, aiResponse: "Face saved as " + name, faces: [name], tags: ["face", "saved"] }); speakText("Got it. I'll remember " + name + "."); }
       return;
     }
 
-    // Camera commands
+    const reminder = parseReminder(cleaned);
+    if (reminder) {
+      addReminder({ text: reminder.task, triggerAt: reminder.triggerAt, email: localStorage.getItem("edith_email") || "" });
+      const time = new Date(reminder.triggerAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setMessages(p => [...p, { role: "edith", text: `I'll remind you to ${reminder.task} at ${time}.` }]); speakText(`I'll remind you to ${reminder.task} at ${time}.`);
+      return;
+    }
+
+    // Calendar: create event
+    const calMatch = cleaned.match(/(?:create|add|schedule|make|set\s+up)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:event|meeting|appointment|call|reminder)?\s*(?:called|titled|named)?\s*(.+)/i);
+    if (calMatch) {
+      const calUrl = localStorage.getItem("edith_calendar_url") || CALENDAR_URL;
+      const details = calMatch[1].trim();
+      const timeMatch = details.match(/(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*tomorrow)?|tomorrow\s*(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?|next\s+\w+\s*(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+      let title = details, startStr = null;
+      if (timeMatch) { startStr = timeMatch[0]; title = details.replace(timeMatch[0], "").replace(/\s+/g, " ").trim().replace(/[,\s]*$/, ""); }
+      if (!title && startStr) title = "Event";
+      try {
+        const r = await fetch(calUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(JSON.stringify({ title, startStr, location: "", description: "" })) });
+        const d = await r.json();
+        setMessages(p => [...p, { role: "edith", text: d.success ? `Added to calendar: ${title}.` : "Could not create event." }]);
+        if (d.success) speakText(`Added ${title} to your calendar.`);
+      } catch { setMessages(p => [...p, { role: "edith", text: "Calendar service unavailable." }]); }
+      return;
+    }
+
+    // Calendar: delete event
+    const delMatch = cleaned.match(/(?:delete|remove|cancel|clear)\s+(?:the\s+)?(?:my\s+)?(?:event|meeting|appointment|call)?\s*(?:called|titled|named)?\s*(.+)/i);
+    if (delMatch) {
+      const calUrl = localStorage.getItem("edith_calendar_url") || CALENDAR_URL;
+      const searchTitle = delMatch[1].trim().toLowerCase();
+      try {
+        const r = await fetch(calUrl + "?period=today");
+        const d = await r.json();
+        if (d.events) {
+          const match = d.events.find(e => e.title.toLowerCase().includes(searchTitle));
+          if (match) {
+            await fetch(calUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(JSON.stringify({ action: "delete", eventId: match.id })) });
+            setMessages(p => [...p, { role: "edith", text: `Deleted: ${match.title}.` }]);
+            speakText(`Deleted ${match.title} from your calendar.`);
+          } else {
+            setMessages(p => [...p, { role: "edith", text: `No event matching "${delMatch[1]}" found today.` }]);
+          }
+        }
+      } catch { setMessages(p => [...p, { role: "edith", text: "Calendar service unavailable." }]); }
+      return;
+    }
+
     if (/take (a )?(picture|photo|snap|snapshot)/.test(t) || /capture (a )?(picture|photo)/.test(t)) {
-      if (!camReady) { setMessages(p => [...p, { role: "edith", text: "Camera is off. Turn it on first." }]); return; }
+      if (!camReady) { setMessages(p => [...p, { role: "edith", text: "Camera is off." }]); return; }
       const result = await takePhoto(videoRef.current);
-      if (result) {
-        addMedia({ type: "photo", dataUrl: result.dataUrl, fileName: "photo-" + Date.now() + ".jpg", tags: ["photo", "camera"] });
-      }
-      setMessages(p => [...p, { role: "edith", text: result ? "Photo taken and saved to Gallery." : "Could not capture photo." }]);
-      addMemory({ type: "observation", text, aiResponse: "Photo captured", faces: facesRef.current.map(f => f.name), tags: ["photo", "camera"] });
+      if (result) addMedia({ type: "photo", dataUrl: result.dataUrl, fileName: "photo-" + Date.now() + ".jpg", tags: ["photo"] });
+      setMessages(p => [...p, { role: "edith", text: result ? "Photo taken." : "Failed." }]);
       return;
     }
-
     if (/(start|begin|take) (a )?(video|recording)/.test(t) || /record (a )?video/.test(t)) {
-      if (!camReady) { setMessages(p => [...p, { role: "edith", text: "Camera is off. Turn it on first." }]); return; }
-      if (recording) { setMessages(p => [...p, { role: "edith", text: "Already recording." }]); return; }
+      if (!camReady) { setMessages(p => [...p, { role: "edith", text: "Camera is off." }]); return; }
+      if (recording) return;
       const rec = startRecording(camStreamRef.current, recordedChunksRef);
-      if (!rec) { setMessages(p => [...p, { role: "edith", text: "Could not start recording." }]); return; }
-      mediaRecorderRef.current = rec;
-      setRecording(true);
+      if (!rec) return;
+      mediaRecorderRef.current = rec; setRecording(true);
       setMessages(p => [...p, { role: "edith", text: "Recording started." }]);
-      addMemory({ type: "observation", text, aiResponse: "Video recording started", faces: facesRef.current.map(f => f.name), tags: ["video", "recording"] });
       return;
     }
-
     if (/(stop|end|finish) (a )?(video|recording)/.test(t)) {
-      if (!recording) { setMessages(p => [...p, { role: "edith", text: "Nothing is recording." }]); return; }
+      if (!recording) return;
       const url = await stopRecording(mediaRecorderRef.current, recordedChunksRef);
-      mediaRecorderRef.current = null;
-      setRecording(false);
-      if (url) {
-        addMedia({ type: "video", dataUrl: url, fileName: "video-" + Date.now() + ".webm", tags: ["video", "recording"] });
-      }
-      setMessages(p => [...p, { role: "edith", text: url ? "Video saved to Gallery." : "Could not save video." }]);
-      addMemory({ type: "observation", text, aiResponse: "Video recording stopped and saved", faces: facesRef.current.map(f => f.name), tags: ["video", "recording"] });
+      mediaRecorderRef.current = null; setRecording(false);
+      if (url) addMedia({ type: "video", dataUrl: url, fileName: "video-" + Date.now() + ".webm", tags: ["video"] });
+      setMessages(p => [...p, { role: "edith", text: url ? "Video saved." : "Failed." }]);
       return;
     }
 
@@ -397,28 +392,18 @@ export default function Dashboard() {
 
     restartAbortRef.current = true;
     if (recRef.current) { recRef.current.stop(); recRef.current = null; }
-
     speakText(reply, () => {
       restartAbortRef.current = false;
       if (listeningRef.current) {
-        const rec = new SR_W();
-        rec.continuous = false;
-        rec.interimResults = true;
-        rec.lang = "en-US";
-        rec.onstart = () => {};
+        const rec = new SR_W(); rec.continuous = false; rec.interimResults = true; rec.lang = "en-US"; rec.onstart = () => {};
         rec.onresult = (e) => recResultRef.current(e);
         rec.onerror = (e) => { if (e.error === "not-allowed") { stopMic(); setErr("Mic blocked"); } };
-        rec.onend = () => {
-          if (recRef.current !== rec || restartAbortRef.current) return;
-          setTimeout(() => { if (recRef.current !== rec) return; try { rec.start(); } catch {} }, 150);
-        };
-        rec.start();
-        recRef.current = rec;
+        rec.onend = () => { if (recRef.current !== rec || restartAbortRef.current) return; setTimeout(() => { if (recRef.current !== rec) return; try { rec.start(); } catch {} }, 150); };
+        rec.start(); recRef.current = rec;
       }
     });
   }, [apikey, camReady, recording]);
 
-  /* ---- speech result handler (ref for stale-closure safety) ---- */
   const recResultRef = useRef(null);
   recResultRef.current = (e) => {
     let final = "", interim = "";
@@ -427,51 +412,32 @@ export default function Dashboard() {
       else interim += e.results[i][0].transcript;
     }
     if (interim) setPartial(interim);
-    if (final.trim()) {
-      setPartial("");
-      setMessages(p => [...p, { role: "user", text: final.trim() }]);
-      doReply(final.trim());
-    }
+    if (final.trim()) { setPartial(""); setMessages(p => [...p, { role: "user", text: final.trim() }]); doReply(final.trim()); }
   };
 
-  /* ===== MIC ===== */
-  const stopMic = () => {
-    const r = recRef.current;
-    recRef.current = null;
-    if (r) r.stop();
-    setListening(false);
-    setPartial("");
-  };
-
+  const stopMic = () => { const r = recRef.current; recRef.current = null; if (r) r.stop(); setListening(false); setPartial(""); };
   const toggleMic = () => {
     if (!SR_W) { setErr("Speech recognition not supported. Try Chrome."); return; }
     if (recRef.current) { stopMic(); return; }
-
-    const rec = new SR_W();
-    rec.continuous = false;
-    rec.interimResults = true;
-    rec.lang = "en-US";
+    const rec = new SR_W(); rec.continuous = false; rec.interimResults = true; rec.lang = "en-US";
     rec.onstart = () => { setListening(true); setErr(""); };
     rec.onresult = (e) => recResultRef.current(e);
-    rec.onerror = (e) => {
-      if (e.error === "not-allowed" && recRef.current === rec) { stopMic(); setErr("Mic blocked. Allow in Chrome and refresh."); }
-    };
-    rec.onend = () => {
-      if (recRef.current !== rec || restartAbortRef.current) return;
-      setTimeout(() => { if (recRef.current !== rec || restartAbortRef.current) return; try { rec.start(); } catch { stopMic(); } }, 150);
-    };
-    rec.start();
-    recRef.current = rec;
+    rec.onerror = (e) => { if (e.error === "not-allowed" && recRef.current === rec) { stopMic(); setErr("Mic blocked."); } };
+    rec.onend = () => { if (recRef.current !== rec || restartAbortRef.current) return; setTimeout(() => { if (recRef.current !== rec || restartAbortRef.current) return; try { rec.start(); } catch { stopMic(); } }, 150); };
+    rec.start(); recRef.current = rec;
   };
 
-  /* ---- text input ---- */
-  const handleSend = () => {
-    const text = inputText.trim();
-    if (!text) return;
-    setInputText("");
-    setMessages(p => [...p, { role: "user", text }]);
-    doReply(text);
-  };
+  const handleSend = () => { const text = inputText.trim(); if (!text) return; setInputText(""); setMessages(p => [...p, { role: "user", text }]); doReply(text); };
+
+  useEffect(() => {
+    const check = () => { const email = localStorage.getItem("edith_email"); if (!email) return; const last = localStorage.getItem("edith_last_daily_sent"); const today = new Date().toDateString(); if (last === today) return; if (new Date().getHours() < 21) return; const summary = generateSummary("today"); const payload = JSON.stringify({ to: email, subject: "E.D.I.T.H. Daily - " + today, body: summary }); fetch(SCRIPT_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(payload) }).catch(() => {}); localStorage.setItem("edith_last_daily_sent", today); };
+    check(); const interval = setInterval(check, 60000); return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const check = () => { if (messages.length === 0 || thinking) return; const nudge = getSuggestedNudge(); const workObs = getWorkplaceObservation(camReady, facesRef.current, null, objectsInView); const msg = workObs || nudge; if (msg) { setMessages(p => [...p, { role: "edith", text: msg }]); speakText(msg); } };
+    const interval = setInterval(check, 300000); return () => clearInterval(interval);
+  }, [messages.length, thinking, camReady, objectsInView.length]);
 
   const stats = [
     { label: "Faces known", value: faceCount, icon: UserCheck },
@@ -480,172 +446,66 @@ export default function Dashboard() {
     { label: "Camera", value: camReady ? "Live" : "Off", icon: Clock },
   ];
 
-  /* ================================================================ */
   return (
     <div className="p-6 lg:p-8 relative min-h-screen flex flex-col">
       <CornerGlow className="w-96 h-96 -top-32 -right-32" color="#6FB7FF" />
       <CornerGlow className="w-64 h-64 -bottom-16 -left-16" color="#FF9D5C" />
-
       <div className="max-w-6xl mx-auto relative z-10 flex flex-col flex-1 w-full gap-6">
-
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-display text-2xl lg:text-3xl font-semibold mb-2">E.D.I.T.H.</h1>
-            <p className="text-gray-400">Your second brain. Better than your first.</p>
-          </div>
+          <div><h1 className="font-display text-2xl lg:text-3xl font-semibold mb-2">E.D.I.T.H.</h1><p className="text-gray-400">Your second brain. Better than your first.</p></div>
           {err && <span className="text-xs text-red-400/80 font-mono max-w-[240px] text-right">{err}</span>}
         </div>
-
         <div className="grid lg:grid-cols-3 gap-6">
           <GlassCard className="lg:col-span-2 relative overflow-hidden !p-0 min-h-[300px] bg-black">
-            <video ref={videoRef} autoPlay playsInline muted
-              className={`absolute inset-0 w-full h-full object-cover scale-x-[-1] ${watching && camReady ? "opacity-100" : "opacity-0"}`} />
+            <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover scale-x-[-1] ${watching && camReady ? "opacity-100" : "opacity-0"}`} />
             {watching && camReady && (
               <>
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none z-10" />
-                <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+                <div className="absolute top-4 left-4 z-20 flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-[10px] tracking-[0.2em] text-red-400 bg-red-500/10 px-2 py-1 rounded-full border border-red-500/20 backdrop-blur-sm">LVE</span>
-                  {recording && (
-                    <span className="font-mono text-[10px] tracking-[0.2em] text-red-300 bg-red-600/20 px-2 py-1 rounded-full border border-red-600/30 backdrop-blur-sm animate-pulse">REC</span>
-                  )}
-                  {detectedFaces.length > 0 && (
-                    <span className="font-mono text-[10px] tracking-[0.2em] text-green-400 bg-green-500/10 px-2 py-1 rounded-full border border-green-500/20 backdrop-blur-sm">
-                      {detectedFaces.length} FACE{detectedFaces.length > 1 ? "S" : ""}
-                    </span>
-                  )}
+                  {recording && <span className="font-mono text-[10px] tracking-[0.2em] text-red-300 bg-red-600/20 px-2 py-1 rounded-full border border-red-600/30 backdrop-blur-sm animate-pulse">REC</span>}
+                  {detectedFaces.length > 0 && <span className="font-mono text-[10px] tracking-[0.2em] text-green-400 bg-green-500/10 px-2 py-1 rounded-full border border-green-500/20 backdrop-blur-sm">{detectedFaces.length} FACE{detectedFaces.length > 1 ? "S" : ""}</span>}
+                  {objectsInView.slice(0, 3).map(obj => <span key={obj} className="font-mono text-[10px] tracking-[0.2em] text-blue-300 bg-blue-500/10 px-2 py-1 rounded-full border border-blue-500/20 backdrop-blur-sm">{obj.toUpperCase()}</span>)}
                 </div>
               </>
             )}
             {(!watching || !camReady) && (
               <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-[#020203] flex items-center justify-center">
                 <div className="text-center space-y-4">
-                  {watching && selectedCam ? (
-                    <>
-                      <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto animate-pulse">
-                        <Camera size={28} className="text-red-400" /></div>
-                      <p className="text-sm text-gray-500 font-mono">STARTING CAMERA...</p>
-                    </>
-                  ) : (
-                    <>
-                      <CameraOff size={32} className="text-gray-600 mx-auto" />
-                      <p className="text-sm text-gray-600 font-mono">CAMERA OFF</p>
-                      <button onClick={() => setWatching(true)} className="text-xs font-mono tracking-[0.2em] text-gray-400 hover:text-white transition-colors">Click to enable</button>
-                    </>
-                  )}
+                  {watching && selectedCam ? (<><div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto animate-pulse"><Camera size={28} className="text-red-400" /></div><p className="text-sm text-gray-500 font-mono">STARTING CAMERA...</p></>) : (<><CameraOff size={32} className="text-gray-600 mx-auto" /><p className="text-sm text-gray-600 font-mono">CAMERA OFF</p><button onClick={() => setWatching(true)} className="text-xs font-mono tracking-[0.2em] text-gray-400 hover:text-white transition-colors">Click to enable</button></>)}
                 </div>
               </div>
             )}
           </GlassCard>
-
           <div className="space-y-4">
             <GlassCard className="!p-5 space-y-5">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center ${listening ? "bg-[#FF9D5C]/10 border border-[#FF9D5C]/20" : "bg-white/5 border border-white/10"}`}>
-                      {listening ? <Mic size={16} className="text-[#FF9D5C]" /> : <MicOff size={16} className="text-gray-500" />}
-                    </div>
-                    <p className="text-sm font-medium">Microphone</p>
-                  </div>
-                  <button onClick={toggleMic} className={`w-10 h-6 rounded-full transition-colors relative ${listening ? "bg-[#FF9D5C]" : "bg-white/10"}`}>
-                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${listening ? "translate-x-4" : "translate-x-0"}`} />
-                  </button>
-                </div>
-                <DeviceSelect devices={micDevices} value={selectedMic} onChange={setSelectedMic} kind="mic" />
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center ${watching ? "bg-red-500/10 border border-red-500/20" : "bg-white/5 border border-white/10"}`}>
-                      {watching ? <Camera size={16} className="text-red-400" /> : <CameraOff size={16} className="text-gray-500" />}
-                    </div>
-                    <p className="text-sm font-medium">Camera</p>
-                  </div>
-                  <button onClick={() => setWatching(!watching)} className={`w-10 h-6 rounded-full transition-colors relative ${watching ? "bg-red-500" : "bg-white/10"}`}>
-                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${watching ? "translate-x-4" : "translate-x-0"}`} />
-                  </button>
-                </div>
-                <DeviceSelect devices={camDevices} value={selectedCam} onChange={setSelectedCam} kind="cam" />
-              </div>
-              {modelsReady && <p className="text-[10px] font-mono text-green-400/60">Face recognition ready</p>}
-              {watching && camReady && !modelsReady && <p className="text-[10px] font-mono text-yellow-400/60">Loading face models...</p>}
+              <div><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className={`w-9 h-9 rounded-full flex items-center justify-center ${listening ? "bg-[#FF9D5C]/10 border border-[#FF9D5C]/20" : "bg-white/5 border border-white/10"}`}>{listening ? <Mic size={16} className="text-[#FF9D5C]" /> : <MicOff size={16} className="text-gray-500" />}</div><p className="text-sm font-medium">Microphone</p></div><button onClick={toggleMic} className={`w-10 h-6 rounded-full transition-colors relative ${listening ? "bg-[#FF9D5C]" : "bg-white/10"}`}><div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${listening ? "translate-x-4" : "translate-x-0"}`} /></button></div><DeviceSelect devices={micDevices} value={selectedMic} onChange={setSelectedMic} kind="mic" /></div>
+              <div><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className={`w-9 h-9 rounded-full flex items-center justify-center ${watching ? "bg-red-500/10 border border-red-500/20" : "bg-white/5 border border-white/10"}`}>{watching ? <Camera size={16} className="text-red-400" /> : <CameraOff size={16} className="text-gray-500" />}</div><p className="text-sm font-medium">Camera</p></div><button onClick={() => setWatching(!watching)} className={`w-10 h-6 rounded-full transition-colors relative ${watching ? "bg-red-500" : "bg-white/10"}`}><div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${watching ? "translate-x-4" : "translate-x-0"}`} /></button></div><DeviceSelect devices={camDevices} value={selectedCam} onChange={setSelectedCam} kind="cam" /></div>
+              {modelsReady && <p className="text-[10px] font-mono text-green-400/60">AI vision ready</p>}
             </GlassCard>
-
-            <GlassCard className="!p-3 flex items-center gap-3">
-              <div className={`w-2 h-2 rounded-full ${apikey ? "bg-green-400" : "bg-red-400"}`} />
-              <span className="text-xs font-mono text-gray-400 flex-1 truncate">
-                {apikey ? `API: ${apikey.slice(0, 12)}...` : "No API key"}
-              </span>
-            </GlassCard>
-
-            <GlassCard className="!p-4">
-              <div className="grid grid-cols-2 gap-y-4 gap-x-2">
-                {stats.map(({ label, value, icon: Icon }) => (
-                  <div key={label}>
-                    <div className="flex items-center gap-2 mb-1"><Icon size={12} className="text-gray-500 shrink-0" /><p className="text-[10px] font-mono tracking-[0.2em] text-gray-500 truncate">{label.toUpperCase()}</p></div>
-                    <p className="font-display text-lg font-semibold">{value}</p>
-                  </div>
-                ))}
-              </div>
-            </GlassCard>
+            <GlassCard className="!p-3 flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${apikey ? "bg-green-400" : "bg-red-400"}`} /><span className="text-xs font-mono text-gray-400 flex-1 truncate">{apikey ? `API: ${apikey.slice(0, 12)}...` : "No API key"}</span></GlassCard>
+            <GlassCard className="!p-4"><div className="grid grid-cols-2 gap-y-4 gap-x-2">{stats.map(({ label, value, icon: Icon }) => (<div key={label}><div className="flex items-center gap-2 mb-1"><Icon size={12} className="text-gray-500 shrink-0" /><p className="text-[10px] font-mono tracking-[0.2em] text-gray-500 truncate">{label.toUpperCase()}</p></div><p className="font-display text-lg font-semibold">{value}</p></div>))}</div></GlassCard>
           </div>
         </div>
-
-        <GlassCard className="!p-0 overflow-hidden flex flex-col">
+        <GlassCard className="!p-0 overflow-hidden flex flex-col min-h-[300px]">
           <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className={`w-2 h-2 rounded-full ${listening ? "bg-green-400 animate-pulse" : "bg-gray-600"}`} />
-              <h2 className="font-display text-sm font-semibold">{listening ? "Listening" : "Mic off"}</h2>
-              {thinking && <span className="flex items-center gap-1.5 text-xs text-blue-300 font-mono"><Volume2 size={12} className="animate-pulse" /> Speaking</span>}
-            </div>
+            <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${listening ? "bg-green-400 animate-pulse" : "bg-gray-600"}`} /><h2 className="font-display text-sm font-semibold">{listening ? "Listening" : "Mic off"}</h2>{thinking && <span className="flex items-center gap-1.5 text-xs text-blue-300 font-mono"><Volume2 size={12} className="animate-pulse" /> Speaking</span>}</div>
             <a href="/memory" className="flex items-center gap-1 text-xs font-mono tracking-[0.2em] text-gray-500 hover:text-white transition-colors">MEMORY <ArrowRight size={12} /></a>
           </div>
-
-          <div className="flex-1 p-6 max-h-[340px] overflow-y-auto space-y-4">
-            {messages.length === 0 && !partial && !thinking && (
-              <div className="text-center py-12">
-                <Sparkles size={32} className="text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-500 text-sm mb-1">Turn on the mic and start talking</p>
-                <p className="text-gray-600 text-xs">Or type below</p>
-              </div>
-            )}
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[75%] rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10 rounded-br-md" : "bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/10 rounded-bl-md"}`}>
-                  <p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">{m.role === "user" ? "YOU" : "E.D.I.T.H."}</p>
-                  <p className="text-sm leading-relaxed">{m.text}</p>
-                </div>
-              </div>
-            ))}
-            {partial && (
-              <div className="flex justify-end">
-                <div className="max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-white/5 border border-white/5">
-                  <p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">YOU</p>
-                  <p className="text-sm text-gray-400 italic">{partial}</p>
-                </div>
-              </div>
-            )}
-            {thinking && (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 px-4 py-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" />
-                  <span className="text-xs text-gray-500 font-mono">thinking...</span>
-                </div>
-              </div>
-            )}
+          <div className="flex-1 p-6 overflow-y-auto space-y-4">
+            {messages.length === 0 && !partial && !thinking && (<div className="text-center py-12"><Sparkles size={32} className="text-gray-600 mx-auto mb-4" /><p className="text-gray-500 text-sm mb-1">Turn on the mic and start talking</p><p className="text-gray-600 text-xs">Or type below</p></div>)}
+            {messages.map((m, i) => (<div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[75%] rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10 rounded-br-md" : "bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/10 rounded-bl-md"}`}><p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">{m.role === "user" ? "YOU" : "E.D.I.T.H."}</p><p className="text-sm leading-relaxed">{m.text}</p></div></div>))}
+            {partial && (<div className="flex justify-end"><div className="max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-white/5 border border-white/5"><p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">YOU</p><p className="text-sm text-gray-400 italic">{partial}</p></div></div>)}
+            {thinking && (<div className="flex justify-start"><div className="flex items-center gap-2 px-4 py-3"><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" /><span className="text-xs text-gray-500 font-mono">thinking...</span></div></div>)}
             <div ref={messagesEndRef} />
           </div>
-
           <div className="px-6 py-4 border-t border-white/5">
             <div className="flex gap-3">
-              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSend(); }}
-                placeholder="Type a message..." className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/20 transition-colors" />
-              <button onClick={handleSend} disabled={!inputText.trim()} className="w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center hover:bg-white/15 transition-colors disabled:opacity-30">
-                <Send size={16} className="text-gray-300" /></button>
+              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSend(); }} placeholder="Type a message..." className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/20 transition-colors" />
+              <button onClick={handleSend} disabled={!inputText.trim()} className="w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center hover:bg-white/15 transition-colors disabled:opacity-30"><Send size={16} className="text-gray-300" /></button>
             </div>
           </div>
         </GlassCard>
-
       </div>
     </div>
   );

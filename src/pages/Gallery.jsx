@@ -1,14 +1,29 @@
-import { useState } from "react";
-import { Image, Video, Download, Trash2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Image, Video, Download, Trash2, X } from "lucide-react";
 import GlassCard from "../components/GlassCard";
-import { getSessionMedia, getStoredMedia } from "../utils/mediaStore";
+import { getSessionMedia, getStoredMedia, deleteMedia, clearAllMedia } from "../utils/mediaStore";
 
 export default function Gallery() {
   const [selected, setSelected] = useState(null);
+  const [, forceUpdate] = useState(0);
 
-  const session = getSessionMedia();
-  const stored = getStoredMedia();
-  const all = session.length > 0 ? session : stored;
+  const all = useMemo(() => {
+    const session = getSessionMedia();
+    const stored = getStoredMedia();
+    return session.length > 0 ? session : stored;
+  }, [selected]);
+
+  const handleDelete = (id) => {
+    deleteMedia(id);
+    if (selected?.id === id) setSelected(null);
+    forceUpdate(n => n + 1);
+  };
+
+  const handleDeleteAll = () => {
+    clearAllMedia();
+    setSelected(null);
+    forceUpdate(n => n + 1);
+  };
 
   if (all.length === 0) {
     return (
@@ -31,25 +46,37 @@ export default function Gallery() {
   return (
     <div className="p-6 lg:p-8 pb-24 lg:pb-8">
       <div className="max-w-6xl mx-auto space-y-6">
-        <div>
-          <h1 className="font-display text-2xl lg:text-3xl font-semibold mb-1">Gallery</h1>
-          <p className="text-gray-400 text-sm">{all.length} items captured.</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-2xl lg:text-3xl font-semibold mb-1">Gallery</h1>
+            <p className="text-gray-400 text-sm">{all.length} items captured.</p>
+          </div>
+          <button onClick={handleDeleteAll}
+            className="text-xs font-mono text-red-400/60 hover:text-red-400 transition-colors flex items-center gap-1.5">
+            <Trash2 size={14} /> Delete all
+          </button>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {all.map(item => (
-            <GlassCard key={item.id} className="!p-3 cursor-pointer hover:border-white/20 transition-colors" onClick={() => setSelected(item)}>
-              <div className="aspect-square rounded-lg bg-black/60 flex items-center justify-center overflow-hidden relative mb-2">
+            <GlassCard key={item.id} className="!p-3 group relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
+                className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-black/60 border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:border-red-500/30">
+                <X size={12} className="text-red-400" />
+              </button>
+              <div className="aspect-square rounded-lg bg-black/60 flex items-center justify-center overflow-hidden relative mb-2 cursor-pointer"
+                onClick={() => setSelected(item)}>
                 {item.type === "photo" && item.dataUrl ? (
                   <img src={item.dataUrl} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <Video size={32} className="text-gray-600" />
                 )}
-                <div className="absolute top-2 right-2">
+                <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/50">
                   {item.type === "photo" ? (
-                    <Image size={12} className="text-white/80" />
+                    <Image size={10} className="text-white/70" />
                   ) : (
-                    <Video size={12} className="text-white/80" />
+                    <Video size={10} className="text-white/70" />
                   )}
                 </div>
               </div>
@@ -83,18 +110,11 @@ export default function Gallery() {
                     <Download size={14} /> Download
                   </a>
                 )}
-                <button onClick={() => {
-                  const meta = JSON.parse(localStorage.getItem("edith_media") || "[]");
-                  const filtered = meta.filter(m => m.id !== selected.id);
-                  localStorage.setItem("edith_media", JSON.stringify(filtered));
-                  setSelected(null);
-                  window.location.reload();
-                }} className="text-xs font-mono text-red-400/60 hover:text-red-400 transition-colors flex items-center gap-1">
+                <button onClick={() => handleDelete(selected.id)}
+                  className="text-xs font-mono text-red-400/60 hover:text-red-400 transition-colors flex items-center gap-1">
                   <Trash2 size={14} /> Delete
                 </button>
-                <button onClick={() => setSelected(null)} className="text-xs font-mono text-gray-400 hover:text-white transition-colors">
-                  Close
-                </button>
+                <button onClick={() => setSelected(null)} className="text-xs font-mono text-gray-400 hover:text-white transition-colors">Close</button>
               </div>
             </div>
           </div>

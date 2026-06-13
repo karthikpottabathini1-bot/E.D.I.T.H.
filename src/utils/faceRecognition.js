@@ -9,6 +9,7 @@ export async function loadModels() {
   await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
   await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
   await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+  await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
   modelsLoaded = true;
 }
 
@@ -18,7 +19,8 @@ export async function detectFaces(videoEl) {
   const detections = await faceapi
     .detectAllFaces(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
     .withFaceLandmarks()
-    .withFaceDescriptors();
+    .withFaceDescriptors()
+    .withFaceExpressions();
 
   return detections;
 }
@@ -82,6 +84,19 @@ export function matchFace(descriptor, knownFaces, threshold = 0.6) {
   );
   const matcher = new faceapi.FaceMatcher(labeled, threshold);
   return matcher.findBestMatch(descriptor);
+}
+
+export function getDominantExpression(expressions) {
+  if (!expressions) return null;
+  return Object.entries(expressions).sort((a, b) => b[1] - a[1])[0];
+}
+
+export function formatExpressionsForAI(detections) {
+  if (!detections.length) return "";
+  return detections.map(d => {
+    const top = getDominantExpression(d.expressions);
+    return top ? `${top[0]} (${Math.round(top[1] * 100)}%)` : "neutral";
+  }).join(", ");
 }
 
 export function drawDetections(canvasEl, detections, knownFaces) {

@@ -35,3 +35,14 @@ export function getStoredMedia() {
   const entries = loadMedia();
   return entries.reverse();
 }
+
+export function deleteMedia(id) {
+  const entries = loadMedia().filter(e => e.id !== id);
+  localStorage.setItem(STORE_KEY, JSON.stringify(entries));
+  sessionMedia = sessionMedia.filter(e => e.id !== id);
+}
+
+export function clearAllMedia() {
+  localStorage.removeItem(STORE_KEY);
+  sessionMedia = [];
+}
