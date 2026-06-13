@@ -324,14 +324,19 @@ export default function Dashboard() {
   /* ---- AI reply ---- */
   const doReply = useCallback(async (text) => {
     const t = text.toLowerCase();
+    const hasWake = /e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?/i.test(t);
+    if (!hasWake) return;
 
-    // Face naming: "save his face as Jared" / "this is Jared" / "remember her as Sarah"
+    const cleaned = text.replace(/.*?e\s*\.?\s*d\s*\.?\s*i\s*\.?\s*t\s*\.?\s*h\s*\.?\s*/i, "").trim();
+    if (!cleaned) return;
+
+    // Face naming
     const nameMatch = t.match(/(?:save|remember|call|name)\s+(?:his|her|their|this|that|the)\s+(?:face|person|guy|man|woman|lady|dude)?\s*(?:as\s+)?([a-z]+(?:\s+[a-z]+)?)/i)
       || t.match(/(?:this|that)\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i)
       || t.match(/(?:his|her|their)\s+name\s+is\s+([a-z]+(?:\s+[a-z]+)?)/i);
     if (nameMatch && nameMatch[1] && nameMatch[1].length > 1) {
       const name = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1).toLowerCase();
-      if (!camReady) { setMessages(p => [...p, { role: "edith", text: "Camera is off. Turn it on so I can see who you're naming." }]); return; }
+      if (!camReady) { return; }
       const frame = captureFrame(videoRef.current);
       const photo = frame ? frame.dataUrl : null;
       const result = renameLastNewFace(name, photo);
@@ -339,8 +344,6 @@ export default function Dashboard() {
         setMessages(p => [...p, { role: "edith", text: "Got it. I'll remember " + result.name + " from now on." }]);
         addMemory({ type: "observation", text: "Named face: " + name, aiResponse: "Face saved as " + name, faces: [name], tags: ["face", "saved", name.toLowerCase()] });
         speakText("Got it. I'll remember " + name + " from now on.");
-      } else {
-        setMessages(p => [...p, { role: "edith", text: "I don't see a new face to name. Make sure someone is in the camera first." }]);
       }
       return;
     }
@@ -386,11 +389,11 @@ export default function Dashboard() {
     const frame = camReady ? (captureFrame(videoRef.current) || {}).dataUrl : null;
     const faceData = facesRef.current;
     const faceNames = faceData.map(f => f.name);
-    const tags = text.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const reply = await fetchAI(text, apikey, frame, faceData);
+    const tags = cleaned.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const reply = await fetchAI(cleaned, apikey, frame, faceData);
     setMessages(p => [...p, { role: "edith", text: reply }]);
     setThinking(false);
-    addMemory({ type: "conversation", text, aiResponse: reply, faces: faceNames, tags });
+    addMemory({ type: "conversation", text: cleaned, aiResponse: reply, faces: faceNames, tags });
 
     restartAbortRef.current = true;
     if (recRef.current) { recRef.current.stop(); recRef.current = null; }
