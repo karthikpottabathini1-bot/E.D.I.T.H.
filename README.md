@@ -82,7 +82,22 @@ E.D.I.T.H. is a fully voice-and-vision AI companion. Turn on your camera and mic
 
 ---
 
-## 🤝 Sponsor Integrations
+## 🤝 Sponsors + Others
+
+This project was built using the following incredible platforms and technologies:
+
+<p align="center">
+  <a href="https://vercel.com"><img src="https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white" /></a>
+  <a href="https://backboard.io"><img src="https://img.shields.io/badge/Backboard.io-000000?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHJ4PSI0IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==&logoColor=white&labelColor=555" /></a>
+  <a href="https://omi.me"><img src="https://img.shields.io/badge/Omi-000000?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIgZmlsbD0id2hpdGUiLz48L3N2Zz4=&logoColor=white&labelColor=555" /></a>
+  <a href="https://elevenlabs.io"><img src="https://img.shields.io/badge/ElevenLabs-000000?style=for-the-badge&logo=elevenlabs&logoColor=white" /></a>
+  <a href="https://openrouter.ai"><img src="https://img.shields.io/badge/OpenRouter-000000?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTIgMkwyIDdsMTAgNSAxMC01TDEyIDJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==&logoColor=white&labelColor=555" /></a>
+  <a href="https://developers.google.com/apps-script"><img src="https://img.shields.io/badge/Google_Apps_Script-000000?style=for-the-badge&logo=google&logoColor=white" /></a>
+  <a href="https://www.tensorflow.org/js"><img src="https://img.shields.io/badge/TensorFlow.js-000000?style=for-the-badge&logo=tensorflow&logoColor=white" /></a>
+  <a href="https://duckduckgo.com"><img src="https://img.shields.io/badge/DuckDuckGo-000000?style=for-the-badge&logo=duckduckgo&logoColor=white" /></a>
+</p>
+
+### Sponsor Integration Details
 
 | Sponsor | Role | How We Used It |
 |---|---|---|

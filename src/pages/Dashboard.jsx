@@ -559,8 +559,8 @@ export default function Dashboard() {
           <div><h1 className="font-display text-2xl lg:text-3xl font-semibold mb-2">E.D.I.T.H.</h1><p className="text-gray-400">Your second brain. Better than your first.</p></div>
           {err && <span className="text-xs text-red-400/80 font-mono max-w-[240px] text-right">{err}</span>}
         </div>
-        <div className="grid lg:grid-cols-3 gap-6">
-          <GlassCard className="lg:col-span-2 relative overflow-hidden !p-0 min-h-[300px] bg-black">
+        <div className="grid lg:grid-cols-2 gap-6">
+          <GlassCard className="relative overflow-hidden !p-0 min-h-[300px] bg-black">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover scale-x-[-1] ${watching && camReady ? "opacity-100" : "opacity-0"}`} />
             {watching && camReady && (
               <>
@@ -580,40 +580,59 @@ export default function Dashboard() {
               </div>
             )}
           </GlassCard>
-          <div className="space-y-4">
-            <GlassCard className="!p-5 space-y-5">
-              <div><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className={`w-9 h-9 rounded-full flex items-center justify-center ${listening ? "bg-[#FF9D5C]/10 border border-[#FF9D5C]/20" : "bg-white/5 border border-white/10"}`}>{listening ? <Mic size={16} className="text-[#FF9D5C]" /> : <MicOff size={16} className="text-gray-500" />}</div><p className="text-sm font-medium">Microphone</p></div><button onClick={toggleMic} className={`w-10 h-6 rounded-full transition-colors relative ${listening ? "bg-[#FF9D5C]" : "bg-white/10"}`}><div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${listening ? "translate-x-4" : "translate-x-0"}`} /></button></div><DeviceSelect devices={micDevices} value={selectedMic} onChange={setSelectedMic} kind="mic" /></div>
-              <div><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className={`w-9 h-9 rounded-full flex items-center justify-center ${watching ? "bg-red-500/10 border border-red-500/20" : "bg-white/5 border border-white/10"}`}>{watching ? <Camera size={16} className="text-red-400" /> : <CameraOff size={16} className="text-gray-500" />}</div><p className="text-sm font-medium">Camera</p></div><button onClick={() => setWatching(!watching)} className={`w-10 h-6 rounded-full transition-colors relative ${watching ? "bg-red-500" : "bg-white/10"}`}><div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${watching ? "translate-x-4" : "translate-x-0"}`} /></button></div><DeviceSelect devices={camDevices} value={selectedCam} onChange={setSelectedCam} kind="cam" /></div>
-              {modelsReady && <p className="text-[10px] font-mono text-green-400/60">AI vision ready</p>}
-            </GlassCard>
-            <GlassCard className="!p-3 flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${apikey ? "bg-green-400" : "bg-red-400"}`} /><span className="text-xs font-mono text-gray-400 flex-1 truncate">{apikey ? `API: ${apikey.slice(0, 12)}...` : "No API key"}</span></GlassCard>
-            <GlassCard className="!p-4"><div className="grid grid-cols-2 gap-y-4 gap-x-2">{stats.map(({ label, value, icon: Icon }) => (<div key={label}><div className="flex items-center gap-2 mb-1"><Icon size={12} className="text-gray-500 shrink-0" /><p className="text-[10px] font-mono tracking-[0.2em] text-gray-500 truncate">{label.toUpperCase()}</p></div><p className="font-display text-lg font-semibold">{value}</p></div>))}</div></GlassCard>
-          </div>
+
+          <GlassCard className="!p-0 overflow-hidden flex flex-col min-h-[300px]">
+            <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+              <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${listening ? "bg-green-400 animate-pulse" : "bg-gray-600"}`} /><h2 className="font-display text-sm font-semibold">{listening ? "Listening" : "Mic off"}</h2>{thinking && <span className="flex items-center gap-1.5 text-xs text-blue-300 font-mono"><Volume2 size={12} className="animate-pulse" /> Speaking</span>}</div>
+              <div className="flex items-center gap-3">
+                {messages.length > 0 && (
+                  <button onClick={() => setMessages([])} className="text-[10px] font-mono tracking-[0.2em] text-gray-500 hover:text-red-400 transition-colors">CLEAR</button>
+                )}
+                <a href="/memory" className="flex items-center gap-1 text-xs font-mono tracking-[0.2em] text-gray-500 hover:text-white transition-colors">MEMORY <ArrowRight size={12} /></a>
+              </div>
+            </div>
+            <div className="flex-1 p-6 overflow-y-auto space-y-4">
+              {messages.length === 0 && !partial && !thinking && (<div className="text-center py-12"><Sparkles size={32} className="text-gray-600 mx-auto mb-4" /><p className="text-gray-500 text-sm mb-1">Turn on the mic and start talking</p><p className="text-gray-600 text-xs">Or type below</p></div>)}
+              {messages.map((m, i) => (<div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[75%] rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10 rounded-br-md" : "bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/10 rounded-bl-md"}`}><p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">{m.role === "user" ? "YOU" : "E.D.I.T.H."}</p><p className="text-sm leading-relaxed">{m.text}</p></div></div>))}
+              {partial && (<div className="flex justify-end"><div className="max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-white/5 border border-white/5"><p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">YOU</p><p className="text-sm text-gray-400 italic">{partial}</p></div></div>)}
+              {thinking && (<div className="flex justify-start"><div className="flex items-center gap-2 px-4 py-3"><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" /><span className="text-xs text-gray-500 font-mono">thinking...</span></div></div>)}
+              <div ref={messagesEndRef} />
+            </div>
+            <div className="px-6 py-4 border-t border-white/5">
+              <div className="flex gap-3">
+                <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSend(); }} placeholder="Type a message..." className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/20 transition-colors" />
+                <button onClick={handleSend} disabled={!inputText.trim()} className="w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center hover:bg-white/15 transition-colors disabled:opacity-30"><Send size={16} className="text-gray-300" /></button>
+              </div>
+            </div>
+          </GlassCard>
         </div>
-        <GlassCard className="!p-0 overflow-hidden flex flex-col min-h-[300px]">
-          <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
-            <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${listening ? "bg-green-400 animate-pulse" : "bg-gray-600"}`} /><h2 className="font-display text-sm font-semibold">{listening ? "Listening" : "Mic off"}</h2>{thinking && <span className="flex items-center gap-1.5 text-xs text-blue-300 font-mono"><Volume2 size={12} className="animate-pulse" /> Speaking</span>}</div>
-            <div className="flex items-center gap-3">
-              {messages.length > 0 && (
-                <button onClick={() => setMessages([])} className="text-[10px] font-mono tracking-[0.2em] text-gray-500 hover:text-red-400 transition-colors">CLEAR</button>
-              )}
-              <a href="/memory" className="flex items-center gap-1 text-xs font-mono tracking-[0.2em] text-gray-500 hover:text-white transition-colors">MEMORY <ArrowRight size={12} /></a>
+
+        {/* Controls row */}
+        <div className="grid lg:grid-cols-4 gap-4">
+          <GlassCard className="!p-4">
+            <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center ${listening ? "bg-[#FF9D5C]/10 border border-[#FF9D5C]/20" : "bg-white/5 border border-white/10"}`}>{listening ? <Mic size={14} className="text-[#FF9D5C]" /> : <MicOff size={14} className="text-gray-500" />}</div><p className="text-xs font-medium">Microphone</p></div><button onClick={toggleMic} className={`w-9 h-5 rounded-full transition-colors relative ${listening ? "bg-[#FF9D5C]" : "bg-white/10"}`}><div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${listening ? "translate-x-4" : "translate-x-0"}`} /></button></div>
+            <DeviceSelect devices={micDevices} value={selectedMic} onChange={setSelectedMic} kind="mic" />
+          </GlassCard>
+          <GlassCard className="!p-4">
+            <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center ${watching ? "bg-red-500/10 border border-red-500/20" : "bg-white/5 border border-white/10"}`}>{watching ? <Camera size={14} className="text-red-400" /> : <CameraOff size={14} className="text-gray-500" />}</div><p className="text-xs font-medium">Camera</p></div><button onClick={() => setWatching(!watching)} className={`w-9 h-5 rounded-full transition-colors relative ${watching ? "bg-red-500" : "bg-white/10"}`}><div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${watching ? "translate-x-4" : "translate-x-0"}`} /></button></div>
+            <DeviceSelect devices={camDevices} value={selectedCam} onChange={setSelectedCam} kind="cam" />
+            {modelsReady && <p className="text-[10px] font-mono text-green-400/60 mt-1">Vision ready</p>}
+          </GlassCard>
+          <GlassCard className="!p-4 flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${apikey ? "bg-green-400" : "bg-red-400"}`} />
+            <span className="text-xs font-mono text-gray-400 truncate">{apikey ? `API: ${apikey.slice(0, 10)}...` : "No key"}</span>
+          </GlassCard>
+          <GlassCard className="!p-4">
+            <div className="grid grid-cols-2 gap-2">
+              {stats.map(({ label, value, icon: Icon }) => (
+                <div key={label}>
+                  <div className="flex items-center gap-1 mb-0.5"><Icon size={10} className="text-gray-500 shrink-0" /><p className="text-[9px] font-mono tracking-[0.2em] text-gray-500 truncate">{label.toUpperCase()}</p></div>
+                  <p className="font-display text-sm font-semibold">{value}</p>
+                </div>
+              ))}
             </div>
-          </div>
-          <div className="flex-1 p-6 overflow-y-auto space-y-4">
-            {messages.length === 0 && !partial && !thinking && (<div className="text-center py-12"><Sparkles size={32} className="text-gray-600 mx-auto mb-4" /><p className="text-gray-500 text-sm mb-1">Turn on the mic and start talking</p><p className="text-gray-600 text-xs">Or type below</p></div>)}
-            {messages.map((m, i) => (<div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[75%] rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10 rounded-br-md" : "bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/10 rounded-bl-md"}`}><p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">{m.role === "user" ? "YOU" : "E.D.I.T.H."}</p><p className="text-sm leading-relaxed">{m.text}</p></div></div>))}
-            {partial && (<div className="flex justify-end"><div className="max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-white/5 border border-white/5"><p className="text-[10px] font-mono tracking-[0.2em] mb-1 text-gray-500">YOU</p><p className="text-sm text-gray-400 italic">{partial}</p></div></div>)}
-            {thinking && (<div className="flex justify-start"><div className="flex items-center gap-2 px-4 py-3"><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" /><div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" /><span className="text-xs text-gray-500 font-mono">thinking...</span></div></div>)}
-            <div ref={messagesEndRef} />
-          </div>
-          <div className="px-6 py-4 border-t border-white/5">
-            <div className="flex gap-3">
-              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSend(); }} placeholder="Type a message..." className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/20 transition-colors" />
-              <button onClick={handleSend} disabled={!inputText.trim()} className="w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center hover:bg-white/15 transition-colors disabled:opacity-30"><Send size={16} className="text-gray-300" /></button>
-            </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
       </div>
     </div>
   );
